@@ -88,23 +88,12 @@ if menu == "📤 Teacher: Upload PDF":
                 st.balloons()
 
 # --- 4. DASHBOARD LOGIC (For Admin) ---
+# --- 4. DASHBOARD LOGIC (For Admin) ---
 elif menu == "📊 Admin: Attendance Report":
     st.title("Holistic Attendance View")
     
-    # DEBUG: Show actual column names if there's an issue
-    if not roster_df.empty:
-        # This hidden check ensures we are looking for the right column name
-        actual_columns = [str(c).strip() for c in roster_df.columns]
-        target_col = "Student Name"
-        
-        if target_col not in actual_columns:
-            st.error(f"❌ Column Header Mismatch!")
-            st.write(f"The app is looking for: **'{target_col}'**")
-            st.write(f"But your 'Student Roster' tab actually has: {list(roster_df.columns)}")
-            st.info("Please rename your first column in the 'Student Roster' tab to match exactly.")
-            st.stop()
-    else:
-        st.warning("The 'Student Roster' tab appears to be empty.")
+    if roster_df.empty:
+        st.warning("The 'Student Roster' tab is empty. Please add students.")
         st.stop()
 
     with st.expander("Filter Report", expanded=True):
@@ -114,40 +103,54 @@ elif menu == "📊 Admin: Attendance Report":
             sel_prog = st.selectbox("Program", config_df['Program Name'].dropna().unique() if not config_df.empty else ["N/A"])
         with f2:
             sel_unit = st.selectbox("Unit", config_df['Unit Name'].dropna().unique() if not config_df.empty else ["N/A"])
-            sel_week = st.number_input("Week Number", min_value=1, max_value=20, value=1)
+            # Get weeks from dump_df if available, else default 1-20
+            avail_weeks = sorted(dump_df['Week Number'].unique()) if not dump_df.empty else list(range(1, 21))
+            sel_week = st.selectbox("Week Number", avail_weeks)
         with f3:
             sel_type = st.selectbox("Session Type", ["Webinar", "Tutorial", "Workshop", "Viva"])
 
     if st.button("Generate Holistic Report"):
-        # 1. Get Expected Students
-        # We use the cleaned column names found by our 'Detective' logic
+        # 1. Filter Roster for specific Program/Unit
+        # We use .iloc to ensure we aren't tripped up by column name strings
         expected = roster_df[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
         
         if expected.empty:
             st.warning(f"No students found in roster for {sel_prog} - {sel_unit}.")
         else:
-            # Using the exact string 'Student Name'
-            expected['Student Name'] = expected['Student Name'].astype(str).str.strip().upper()
+            # FIX: Instead of calling ['Student Name'], we call the 1st column by position
+            # This bypasses any "KeyError" or "AttributeError" regarding the name
+            std_col_name = expected.columns[0] 
+            expected['NAME_CLEAN'] = expected[std_col_name].astype(str).str.strip().upper()
 
             # 2. Get Actual Attendance
+            actual_data = pd.DataFrame(columns=['NAME_CLEAN', 'Duration'])
             if not dump_df.empty:
-                actual = dump_df[
+                # Filter dump
+                actual_filtered = dump_df[
                     (dump_df['Study Period'] == sel_sp) & 
                     (dump_df['Unit Name'] == sel_unit) & 
                     (dump_df['Week Number'].astype(str) == str(sel_week)) &
                     (dump_df['Session Type'] == sel_type)
                 ].copy()
                 
-                if not actual.empty and 'Student Name' in actual.columns:
-                    actual['Student Name'] = actual['Student Name'].astype(str).str.strip().upper()
-                else:
-                    actual = pd.DataFrame(columns=['Student Name', 'Duration'])
-            else:
-                actual = pd.DataFrame(columns=['Student Name', 'Duration'])
+                if not actual_filtered.empty:
+                    # Again, use position [7] which is 'Student Name' in your dump sheet
+                    actual_col_name = actual_filtered.columns[7] 
+                    actual_filtered['NAME_CLEAN'] = actual_filtered[actual_col_name].astype(str).str.strip().upper()
+                    actual_data = actual_filtered[['NAME_CLEAN', 'Duration']]
 
-            # 3. Merge
-            merged = pd.merge(expected[['Student Name']], actual[['Student Name', 'Duration']], on='Student Name', how='left')
-            merged['Status'] = merged['Duration'].apply(lambda x: "✅ Present" if pd.notna(x) and str(x).strip() != "" and str(x) != "-" else "❌ Absent")
+            # 3. Merge on our new 'NAME_CLEAN' column
+            merged = pd.merge(
+                expected[[std_col_name, 'NAME_CLEAN']], 
+                actual_data, 
+                on='NAME_CLEAN', 
+                how='left'
+            )
+            
+            # 4. Status Logic
+            merged['Status'] = merged['Duration'].apply(
+                lambda x: "✅ Present" if pd.notna(x) and str(x).strip() not in ["", "-", "None"] else "❌ Absent"
+            )
             
             # Display
             st.divider()
@@ -156,4 +159,6 @@ elif menu == "📊 Admin: Attendance Report":
             m1.metric("Present", pres)
             m2.metric("Absent", len(merged) - pres)
 
-            st.dataframe(merged[['Student Name', 'Status', 'Duration']].astype(str), use_container_layout=True)
+            # Final Table (Showing the original name from Roster)
+            display_table = merged[[std_col_name, 'Status', 'Duration']].rename(columns={std_col_name: "Student Name"})
+            st.dataframe(display_table.astype(str), use_container_layout=True)
