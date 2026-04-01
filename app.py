@@ -131,7 +131,7 @@ elif menu == "📊 Report":
                 "Duration": duration if duration else "-"
             })
 
-       if not results:
+        if not results:
             st.error("No students found in roster matching these filters.")
         else:
             final_df = pd.DataFrame(results)
@@ -151,4 +151,4 @@ elif menu == "📊 Report":
                 st.dataframe(display_df, use_container_layout=True)
             except:
                 # If dataframe STILL fails, use the static table method
-                st.table(final_df.astype(str))
+                st.table(final_df.astype(str))   
