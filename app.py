@@ -95,36 +95,48 @@ elif menu == "📊 Admin: Attendance Report":
     with st.expander("Filter Report", expanded=True):
         f1, f2, f3 = st.columns(3)
         with f1:
-            sel_sp = st.selectbox("Study Period", config_df['Study Period'].unique())
-            sel_prog = st.selectbox("Program", config_df['Program Name'].dropna().unique())
+            sel_sp = st.selectbox("Study Period", config_df['Study Period'].unique() if not config_df.empty else ["N/A"])
+            sel_prog = st.selectbox("Program", config_df['Program Name'].dropna().unique() if not config_df.empty else ["N/A"])
         with f2:
-            sel_unit = st.selectbox("Unit", config_df['Unit Name'].dropna().unique())
+            sel_unit = st.selectbox("Unit", config_df['Unit Name'].dropna().unique() if not config_df.empty else ["N/A"])
             sel_week = st.number_input("Week Number", min_value=1, max_value=20, value=1)
         with f3:
             sel_type = st.selectbox("Session Type", ["Webinar", "Tutorial", "Workshop", "Viva"])
 
     if st.button("Generate Holistic Report"):
-        # 1. Get Expected Students from 'Student Roster'
-        expected = roster_df[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
-        expected['Student Name'] = expected['Student Name'].str.strip().upper()
+        if 'Student Name' not in roster_df.columns:
+            st.error("Error: Could not find 'Student Name' column in the 'Student Roster' tab. Please check your Google Sheet headers.")
+        else:
+            # 1. Get Expected Students from 'Student Roster'
+            expected = roster_df[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
+            
+            if expected.empty:
+                st.warning(f"No students found in roster for {sel_prog} - {sel_unit}.")
+            else:
+                expected['Student Name'] = expected['Student Name'].astype(str).str.strip().upper()
 
-        # 2. Get Actual Attendance from 'Raw Dump'
-        actual = dump_df[
-            (dump_df['Study Period'] == sel_sp) & 
-            (dump_df['Unit Name'] == sel_unit) & 
-            (dump_df['Week Number'].astype(str) == str(sel_week)) &
-            (dump_df['Session Type'] == sel_type)
-        ].copy()
-        actual['Student Name'] = actual['Student Name'].str.strip().upper()
+                # 2. Get Actual Attendance from 'Raw Dump'
+                if not dump_df.empty:
+                    # Ensure column names match and types are consistent for filtering
+                    actual = dump_df[
+                        (dump_df['Study Period'] == sel_sp) & 
+                        (dump_df['Unit Name'] == sel_unit) & 
+                        (dump_df['Week Number'].astype(str) == str(sel_week)) &
+                        (dump_df['Session Type'] == sel_type)
+                    ].copy()
+                    actual['Student Name'] = actual['Student Name'].astype(str).str.strip().upper()
+                else:
+                    actual = pd.DataFrame(columns=['Student Name', 'Duration'])
 
-        # 3. Merge to find Absentees
-        merged = pd.merge(expected[['Student Name']], actual[['Student Name', 'Duration']], on='Student Name', how='left')
-        merged['Status'] = merged['Duration'].apply(lambda x: "✅ Present" if pd.notna(x) and x != "" else "❌ Absent")
-        
-        # Display Metrics
-        m1, m2 = st.columns(2)
-        pres = (merged['Status'] == "✅ Present").sum()
-        m1.metric("Present", pres)
-        m2.metric("Absent", len(merged) - pres)
+                # 3. Merge to find Absentees
+                merged = pd.merge(expected[['Student Name']], actual[['Student Name', 'Duration']], on='Student Name', how='left')
+                merged['Status'] = merged['Duration'].apply(lambda x: "✅ Present" if pd.notna(x) and str(x).strip() != "" and str(x) != "-" else "❌ Absent")
+                
+                # Display Metrics
+                st.divider()
+                m1, m2 = st.columns(2)
+                pres = (merged['Status'] == "✅ Present").sum()
+                m1.metric("Present", pres)
+                m2.metric("Absent", len(merged) - pres)
 
-        st.dataframe(merged[['Student Name', 'Status', 'Duration']].astype(str), use_container_layout=True)
+                st.dataframe(merged[['Student Name', 'Status', 'Duration']].astype(str), use_container_layout=True)
