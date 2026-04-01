@@ -16,7 +16,7 @@ try:
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     
-    SHEET_ID = "YOUR_SPREADSHEET_ID_HERE" 
+    SHEET_ID = "1hVorDloheqOk5BL-6_JDOGHWZkHQeSUlhyoN_ou3UJQ" 
     ss = client.open_by_key(SHEET_ID)
     
     # Load all 3 tabs as lists of dictionaries (much more stable than DataFrames)
