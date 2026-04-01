@@ -131,13 +131,24 @@ elif menu == "📊 Report":
                 "Duration": duration if duration else "-"
             })
 
-        if not results:
+       if not results:
             st.error("No students found in roster matching these filters.")
         else:
             final_df = pd.DataFrame(results)
             st.divider()
+            
+            # 1. Show Metrics
             c1, c2 = st.columns(2)
             present_count = (final_df["Status"] == "✅ Present").sum()
-            c1.metric("Present", present_count)
-            c2.metric("Absent", len(final_df) - present_count)
-            st.dataframe(final_df, use_container_layout=True)
+            c1.metric("Present", int(present_count))
+            c2.metric("Absent", int(len(final_df) - present_count))
+            
+            # 2. The "Safe" Table Display
+            st.subheader("Attendance List")
+            try:
+                # Convert everything to string to prevent the TypeError
+                display_df = final_df.astype(str)
+                st.dataframe(display_df, use_container_layout=True)
+            except:
+                # If dataframe STILL fails, use the static table method
+                st.table(final_df.astype(str))
