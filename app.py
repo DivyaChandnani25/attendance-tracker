@@ -89,44 +89,52 @@ if menu == "📤 Teacher: Upload PDF":
 
 # --- 4. DASHBOARD LOGIC (For Admin) ---
 # --- 4. DASHBOARD LOGIC (For Admin) ---
+# --- 4. DASHBOARD LOGIC (For Admin) ---
 elif menu == "📊 Admin: Attendance Report":
     st.title("Holistic Attendance View")
     
     if roster_df.empty:
-        st.warning("The 'Student Roster' tab is empty. Please add students.")
+        st.warning("The 'Student Roster' tab is empty.")
         st.stop()
 
     with st.expander("Filter Report", expanded=True):
         f1, f2, f3 = st.columns(3)
         with f1:
-            sel_sp = st.selectbox("Study Period", config_df['Study Period'].unique() if not config_df.empty else ["N/A"])
-            sel_prog = st.selectbox("Program", config_df['Program Name'].dropna().unique() if not config_df.empty else ["N/A"])
+            # Safely get unique values for dropdowns
+            sp_list = config_df['Study Period'].unique() if 'Study Period' in config_df.columns else ["N/A"]
+            sel_sp = st.selectbox("Study Period", sp_list)
+            
+            prog_list = config_df['Program Name'].dropna().unique() if 'Program Name' in config_df.columns else ["N/A"]
+            sel_prog = st.selectbox("Program", prog_list)
         with f2:
-            sel_unit = st.selectbox("Unit", config_df['Unit Name'].dropna().unique() if not config_df.empty else ["N/A"])
-            # Get weeks from dump_df if available, else default 1-20
-            avail_weeks = sorted(dump_df['Week Number'].unique()) if not dump_df.empty else list(range(1, 21))
+            unit_list = config_df['Unit Name'].dropna().unique() if 'Unit Name' in config_df.columns else ["N/A"]
+            sel_unit = st.selectbox("Unit", unit_list)
+            
+            avail_weeks = sorted(dump_df['Week Number'].unique()) if not dump_df.empty and 'Week Number' in dump_df.columns else [1]
             sel_week = st.selectbox("Week Number", avail_weeks)
         with f3:
             sel_type = st.selectbox("Session Type", ["Webinar", "Tutorial", "Workshop", "Viva"])
 
     if st.button("Generate Holistic Report"):
-        # 1. Filter Roster for specific Program/Unit
-        # We use .iloc to ensure we aren't tripped up by column name strings
-        expected = roster_df[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
+        # 1. Filter Roster - Using .query or standard boolean indexing
+        # We ensure 'expected' is a DataFrame by using loc
+        expected = roster_df.loc[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
         
         if expected.empty:
-            st.warning(f"No students found in roster for {sel_prog} - {sel_unit}.")
+            st.warning(f"No students found in roster matching: {sel_prog} | {sel_unit}")
         else:
-            # FIX: Instead of calling ['Student Name'], we call the 1st column by position
-            # This bypasses any "KeyError" or "AttributeError" regarding the name
-            std_col_name = expected.columns[0] 
-            expected['NAME_CLEAN'] = expected[std_col_name].astype(str).str.strip().upper()
+            # Identify the Student Name column (usually the 1st one)
+            std_col = expected.columns[0]
+            
+            # Create a clean matching column
+            expected['MATCH_KEY'] = expected[std_col].astype(str).str.strip().upper()
 
-            # 2. Get Actual Attendance
-            actual_data = pd.DataFrame(columns=['NAME_CLEAN', 'Duration'])
+            # 2. Get Actual Attendance from Dump
+            actual_data = pd.DataFrame(columns=['MATCH_KEY', 'Duration'])
+            
             if not dump_df.empty:
-                # Filter dump
-                actual_filtered = dump_df[
+                # Filter the dump data
+                actual_filtered = dump_df.loc[
                     (dump_df['Study Period'] == sel_sp) & 
                     (dump_df['Unit Name'] == sel_unit) & 
                     (dump_df['Week Number'].astype(str) == str(sel_week)) &
@@ -134,31 +142,27 @@ elif menu == "📊 Admin: Attendance Report":
                 ].copy()
                 
                 if not actual_filtered.empty:
-                    # Again, use position [7] which is 'Student Name' in your dump sheet
-                    actual_col_name = actual_filtered.columns[7] 
-                    actual_filtered['NAME_CLEAN'] = actual_filtered[actual_col_name].astype(str).str.strip().upper()
-                    actual_data = actual_filtered[['NAME_CLEAN', 'Duration']]
+                    # Column 7 is 'Student Name' in the dump
+                    att_name_col = actual_filtered.columns[7]
+                    actual_filtered['MATCH_KEY'] = actual_filtered[att_name_col].astype(str).str.strip().upper()
+                    actual_data = actual_filtered[['MATCH_KEY', 'Duration']]
 
-            # 3. Merge on our new 'NAME_CLEAN' column
-            merged = pd.merge(
-                expected[[std_col_name, 'NAME_CLEAN']], 
-                actual_data, 
-                on='NAME_CLEAN', 
-                how='left'
-            )
+            # 3. Merge Expected vs Actual
+            merged = pd.merge(expected, actual_data, on='MATCH_KEY', how='left')
             
-            # 4. Status Logic
+            # 4. Final Status Logic
             merged['Status'] = merged['Duration'].apply(
                 lambda x: "✅ Present" if pd.notna(x) and str(x).strip() not in ["", "-", "None"] else "❌ Absent"
             )
             
-            # Display
+            # Metrics
             st.divider()
             m1, m2 = st.columns(2)
-            pres = (merged['Status'] == "✅ Present").sum()
-            m1.metric("Present", pres)
-            m2.metric("Absent", len(merged) - pres)
+            pres_count = (merged['Status'] == "✅ Present").sum()
+            m1.metric("Present", pres_count)
+            m2.metric("Absent", len(merged) - pres_count)
 
-            # Final Table (Showing the original name from Roster)
-            display_table = merged[[std_col_name, 'Status', 'Duration']].rename(columns={std_col_name: "Student Name"})
-            st.dataframe(display_table.astype(str), use_container_layout=True)
+            # Display Table
+            # Show original name, Status, and Duration
+            output_cols = [std_col, 'Status', 'Duration']
+            st.dataframe(merged[output_cols].astype(str), use_container_layout=True)
