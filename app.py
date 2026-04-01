@@ -110,8 +110,13 @@ elif menu == "📊 Attendance Dashboard":
         st.bar_chart(chart_data, x="Student Name", y="Sessions")
 
         st.subheader("Data Overview")
-        # Fix: Convert all data to strings to prevent the TypeError in the table display
-        clean_df = filtered.astype(str)
-        st.dataframe(clean_df, use_container_layout=True)
+        try:
+            # We convert to a standard list to strip away any weird formatting
+            data_list = filtered.values.tolist()
+            column_names = filtered.columns.tolist()
+            st.table(pd.DataFrame(data_list, columns=column_names))
+        except Exception as e:
+            st.write("Displaying raw data instead:")
+            st.write(filtered)
     else:
         st.info("No data found. Upload a PDF to get started!")
