@@ -17,7 +17,7 @@ try:
     
     # Open the first tab of the Google Sheet
     SHEET_NAME = "Attendance Raw Dump"  
-    dump_sheet = client.open(SHEET_NAME).sheet1
+    dump_sheet = sheet = client.open_by_key("1hVorDloheqOk5BL-6_JDOGHWZkHQeSUlhyoN_ou3UJQ").sheet1
 except Exception as e:
     st.error("Could not connect to Google Sheets. Check your Secret Key and Sheet Name!")
     st.stop()
