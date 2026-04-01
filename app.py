@@ -16,15 +16,13 @@ try:
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     
-    # RE-ENTER YOUR SHEET ID HERE
-    SHEET_ID = "1hVorDloheqOk5BL-6_JDOGHWZkHQeSUlhyoN_ou3UJQ" 
+    SHEET_ID = "YOUR_SPREADSHEET_ID_HERE" 
     ss = client.open_by_key(SHEET_ID)
     
-    # Force refresh data from all 3 tabs
-    dump_sheet = ss.worksheet("Attendance Raw Dump")
-    config_df = pd.DataFrame(ss.worksheet("Config").get_all_records())
-    roster_df = pd.DataFrame(ss.worksheet("Student Roster").get_all_records())
-    dump_df = pd.DataFrame(dump_sheet.get_all_records())
+    # Load all 3 tabs as lists of dictionaries (much more stable than DataFrames)
+    config_data = ss.worksheet("Config").get_all_records()
+    roster_data = ss.worksheet("Student Roster").get_all_records()
+    dump_data = ss.worksheet("Attendance Raw Dump").get_all_records()
 except Exception as e:
     st.error(f"Connection Error: {e}")
     st.stop()
@@ -32,98 +30,114 @@ except Exception as e:
 st.sidebar.title("Menu")
 menu = st.sidebar.radio("Select Task:", ["📤 Upload", "📊 Report"])
 
-# --- 3. UPLOAD ---
+# --- 2. UPLOAD LOGIC ---
 if menu == "📤 Upload":
     st.title("Upload Attendance")
-    # (Existing Upload Logic remains the same as previous stable version)
+    if not config_data:
+        st.error("Config tab is empty.")
+        st.stop()
+    
+    # Simple dropdowns using Python lists
+    sps = list(set([str(r.get('Study Period', '')) for r in config_data]))
+    progs = list(set([str(r.get('Program Name', '')) for r in config_data]))
+    units = list(set([str(r.get('Unit Name', '')) for r in config_data]))
+    facs = list(set([str(r.get('Facilitator Name', '')) for r in config_data]))
+
     with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1:
-            sp = st.selectbox("Study Period", config_df.iloc[:, 0].unique())
-            prog = st.selectbox("Program", config_df.iloc[:, 2].dropna().unique())
-            sess_type = st.selectbox("Type", ["Webinar", "Tutorial", "Workshop", "Viva"])
+            sel_sp = st.selectbox("Study Period", sps)
+            sel_prog = st.selectbox("Program", progs)
+            sel_type = st.selectbox("Type", ["Webinar", "Tutorial", "Workshop", "Viva"])
         with c2:
-            unit = st.selectbox("Unit", config_df.iloc[:, 3].dropna().unique())
-            fac = st.selectbox("Facilitator", config_df.iloc[:, 4].dropna().unique())
+            sel_unit = st.selectbox("Unit", units)
+            sel_fac = st.selectbox("Facilitator", facs)
 
     uploaded_file = st.file_uploader("Upload PDF", type="pdf")
     if st.button("Submit"):
         if uploaded_file:
             with pdfplumber.open(uploaded_file) as pdf:
-                text = "".join([p.extract_text() for p in pdf.pages])
+                text = "".join([p.extract_text() or "" for p in pdf.pages])
                 tables = []
                 for p in pdf.pages:
                     if p.extract_table(): tables.extend(p.extract_table())
             
+            # Extract Date
             date_m = re.search(r"Meeting Date\s+(\d{1,2}-[A-Za-z]{3}-\d{4})", text)
             pdf_date = datetime.strptime(date_m.group(1), "%d-%b-%Y") if date_m else datetime.now()
             
-            # Find Start Date from Config (Column B)
-            sp_row = config_df[config_df.iloc[:, 0] == sp]
-            sp_start = pd.to_datetime(sp_row.iloc[0, 1])
+            # Week Calc
+            start_date_str = next((r.get('SP Start Date') for r in config_data if str(r.get('Study Period')) == sel_sp), None)
+            sp_start = pd.to_datetime(start_date_str) if start_date_str else datetime.now()
             week_num = max(1, ((pdf_date - sp_start).days // 7) + 1)
 
+            # Process Table
             df = pd.DataFrame(tables)
             h_idx = df[df.apply(lambda r: r.astype(str).str.contains('Participant name', case=False).any(), axis=1)].index[0]
             df.columns = df.iloc[h_idx]
             df = df[h_idx+1:].dropna(subset=[df.columns[1]])
 
-            rows = []
+            rows_to_upload = []
             for _, r in df.iterrows():
-                rows.append([pdf_date.strftime("%Y-%m-%d"), sp, week_num, prog, unit, fac, sess_type, str(r.iloc[1]).strip().upper(), r.iloc[3]])
+                rows_to_upload.append([
+                    pdf_date.strftime("%Y-%m-%d"), sel_sp, week_num, sel_prog, sel_unit, 
+                    sel_fac, sel_type, str(r.iloc[1]).strip().upper(), r.iloc[3]
+                ])
             
-            dump_sheet.append_rows(rows)
-            st.success("Uploaded!")
+            ss.worksheet("Attendance Raw Dump").append_rows(rows_to_upload)
+            st.success(f"Success! Uploaded {len(rows_to_upload)} records.")
 
-# --- 4. REPORT ---
+# --- 3. REPORT LOGIC ---
 elif menu == "📊 Report":
-    st.title("Holistic Report")
+    st.title("Holistic Attendance Report")
     
-    if roster_df.empty:
-        st.error("Roster is empty.")
+    if not roster_data:
+        st.warning("No data in Student Roster.")
         st.stop()
 
     f1, f2, f3 = st.columns(3)
     with f1:
-        sel_prog = st.selectbox("Program", roster_df.iloc[:, 1].unique())
+        u_progs = sorted(list(set([str(r.get('Program Name', '')) for r in roster_data])))
+        s_prog = st.selectbox("Select Program", u_progs)
     with f2:
-        sel_unit = st.selectbox("Unit", roster_df.iloc[:, 2].unique())
+        u_units = sorted(list(set([str(r.get('Unit Name', '')) for r in roster_data if str(r.get('Program Name')) == s_prog])))
+        s_unit = st.selectbox("Select Unit", u_units)
     with f3:
-        sel_week = st.number_input("Week", 1, 20, 1)
+        s_week = st.number_input("Week Number", 1, 20, 1)
 
-    if st.button("Generate"):
-        # 1. Filter Roster (Column B for Program, Column C for Unit)
-        # We use .values to keep it as a simple list to avoid index errors
-        expected_names = roster_df[
-            (roster_df.iloc[:, 1].astype(str) == str(sel_prog)) & 
-            (roster_df.iloc[:, 2].astype(str) == str(sel_unit))
-        ].iloc[:, 0].astype(str).str.strip().upper().tolist()
+    if st.button("Generate Report"):
+        # 1. Get Expected List from Roster (Case Insensitive)
+        expected = [str(r.get('Student Name', '')).strip().upper() for r in roster_data 
+                    if str(r.get('Program Name')) == s_prog and str(r.get('Unit Name')) == s_unit]
+        
+        # 2. Get Actual Attendance from Dump
+        actual_map = {}
+        for row in dump_data:
+            # Check match for Unit, Week, and Program
+            if (str(row.get('Unit Name')) == s_unit and 
+                str(row.get('Week Number')) == str(s_week) and 
+                str(row.get('Program Name')) == s_prog):
+                
+                name_key = str(row.get('Student Name', '')).strip().upper()
+                actual_map[name_key] = row.get('Duration', '-')
 
-        if not expected_names:
-            st.warning("No students found for this selection.")
+        # 3. Build Results
+        results = []
+        for name in expected:
+            duration = actual_map.get(name)
+            results.append({
+                "Student Name": name,
+                "Status": "✅ Present" if duration else "❌ Absent",
+                "Duration": duration if duration else "-"
+            })
+
+        if not results:
+            st.error("No students found in roster matching these filters.")
         else:
-            # 2. Filter Dump (Column D=Prog, E=Unit, C=Week)
-            actual_map = {}
-            if not dump_df.empty:
-                attendance = dump_df[
-                    (dump_df.iloc[:, 3].astype(str) == str(sel_prog)) &
-                    (dump_df.iloc[:, 4].astype(str) == str(sel_unit)) &
-                    (dump_df.iloc[:, 2].astype(str) == str(sel_week))
-                ]
-                # Map Name -> Duration
-                for _, row in attendance.iterrows():
-                    actual_map[str(row.iloc[7]).strip().upper()] = row.iloc[8]
-
-            # 3. Build Final Display List
-            final_list = []
-            for name in expected_names:
-                duration = actual_map.get(name, None)
-                status = "✅ Present" if duration else "❌ Absent"
-                final_list.append({"Student Name": name, "Status": status, "Duration": duration or "-"})
-
-            report_df = pd.DataFrame(final_list)
-            
+            final_df = pd.DataFrame(results)
             st.divider()
-            pres = (report_df["Status"] == "✅ Present").sum()
-            st.metric("Total Present", pres)
-            st.dataframe(report_df, use_container_layout=True)
+            c1, c2 = st.columns(2)
+            present_count = (final_df["Status"] == "✅ Present").sum()
+            c1.metric("Present", present_count)
+            c2.metric("Absent", len(final_df) - present_count)
+            st.dataframe(final_df, use_container_layout=True)
