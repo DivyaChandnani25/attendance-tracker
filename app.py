@@ -132,13 +132,25 @@ elif menu == "📊 Report":
         if not results:
             st.error("No students found for this combination. Check your Student Roster tab.")
         else:
-            final_df = pd.DataFrame(results).astype(str) # Force EVERYTHING to string
+            # Create the DataFrame
+            final_df = pd.DataFrame(results)
             
+            # 1. Show Metrics
             st.divider()
             c1, c2 = st.columns(2)
-            present_count = (final_df["Status"] == "✅ Present").sum()
+            present_count = len([r for r in results if r["Status"] == "✅ Present"])
+            absent_count = len(results) - present_count
+            
             c1.metric("Present", int(present_count))
-            c2.metric("Absent", int(len(final_df) - present_count))
+            c2.metric("Absent", int(absent_count))
             
             st.subheader(f"Attendance: {s_unit} (Week {s_week} - {s_type})")
-            st.dataframe(final_df, use_container_layout=True)
+            
+            # 2. THE FINAL SAFETY FIX: Use st.table instead of st.dataframe
+            # This renders as a simple HTML table which avoids the JavaScript TypeError
+            try:
+                st.table(final_df.astype(str))
+            except Exception as e:
+                # If even that fails (unlikely), show as raw text so you still see the data
+                st.write("Displaying raw data due to a rendering error:")
+                st.write(results)
