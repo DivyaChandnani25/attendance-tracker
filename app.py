@@ -89,7 +89,6 @@ if menu == "📤 Teacher: Upload PDF":
 
 # --- 4. DASHBOARD LOGIC (For Admin) ---
 # --- 4. DASHBOARD LOGIC (For Admin) ---
-# --- 4. DASHBOARD LOGIC (For Admin) ---
 elif menu == "📊 Admin: Attendance Report":
     st.title("Holistic Attendance View")
     
@@ -100,7 +99,6 @@ elif menu == "📊 Admin: Attendance Report":
     with st.expander("Filter Report", expanded=True):
         f1, f2, f3 = st.columns(3)
         with f1:
-            # Safely get unique values for dropdowns
             sp_list = config_df['Study Period'].unique() if 'Study Period' in config_df.columns else ["N/A"]
             sel_sp = st.selectbox("Study Period", sp_list)
             
@@ -110,47 +108,50 @@ elif menu == "📊 Admin: Attendance Report":
             unit_list = config_df['Unit Name'].dropna().unique() if 'Unit Name' in config_df.columns else ["N/A"]
             sel_unit = st.selectbox("Unit", unit_list)
             
-            avail_weeks = sorted(dump_df['Week Number'].unique()) if not dump_df.empty and 'Week Number' in dump_df.columns else [1]
+            # Extract unique weeks from dump safely
+            if not dump_df.empty and 'Week Number' in dump_df.columns:
+                avail_weeks = sorted(dump_df['Week Number'].unique())
+            else:
+                avail_weeks = [1]
             sel_week = st.selectbox("Week Number", avail_weeks)
         with f3:
             sel_type = st.selectbox("Session Type", ["Webinar", "Tutorial", "Workshop", "Viva"])
 
     if st.button("Generate Holistic Report"):
-        # 1. Filter Roster - Using .query or standard boolean indexing
-        # We ensure 'expected' is a DataFrame by using loc
-        expected = roster_df.loc[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
+        # 1. Filter Roster and FORCE a deep copy to preserve column structure
+        mask = (roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)
+        expected = roster_df.loc[mask].copy(deep=True)
         
         if expected.empty:
-            st.warning(f"No students found in roster matching: {sel_prog} | {sel_unit}")
+            st.warning(f"No students found in roster for: {sel_prog} | {sel_unit}")
         else:
-            # Identify the Student Name column (usually the 1st one)
-            std_col = expected.columns[0]
+            # Re-verify headers after the copy
+            cols = list(expected.columns)
+            std_col = cols[0] # Grab the first column name regardless of what it is
             
-            # Create a clean matching column
-            expected['MATCH_KEY'] = expected[std_col].astype(str).str.strip().upper()
+            # Create matching key using positional indexing to avoid __getattribute__ errors
+            expected['MATCH_KEY'] = expected.iloc[:, 0].astype(str).str.strip().upper()
 
-            # 2. Get Actual Attendance from Dump
+            # 2. Process Actual Attendance
             actual_data = pd.DataFrame(columns=['MATCH_KEY', 'Duration'])
             
             if not dump_df.empty:
-                # Filter the dump data
-                actual_filtered = dump_df.loc[
-                    (dump_df['Study Period'] == sel_sp) & 
-                    (dump_df['Unit Name'] == sel_unit) & 
-                    (dump_df['Week Number'].astype(str) == str(sel_week)) &
-                    (dump_df['Session Type'] == sel_type)
-                ].copy()
+                d_mask = (dump_df['Study Period'] == sel_sp) & \
+                         (dump_df['Unit Name'] == sel_unit) & \
+                         (dump_df['Week Number'].astype(str) == str(sel_week)) & \
+                         (dump_df['Session Type'] == sel_type)
+                
+                actual_filtered = dump_df.loc[d_mask].copy(deep=True)
                 
                 if not actual_filtered.empty:
-                    # Column 7 is 'Student Name' in the dump
-                    att_name_col = actual_filtered.columns[7]
-                    actual_filtered['MATCH_KEY'] = actual_filtered[att_name_col].astype(str).str.strip().upper()
+                    # Column 7 is 'Student Name' in the dump tab
+                    actual_filtered['MATCH_KEY'] = actual_filtered.iloc[:, 7].astype(str).str.strip().upper()
                     actual_data = actual_filtered[['MATCH_KEY', 'Duration']]
 
-            # 3. Merge Expected vs Actual
+            # 3. Merge
             merged = pd.merge(expected, actual_data, on='MATCH_KEY', how='left')
             
-            # 4. Final Status Logic
+            # 4. Status
             merged['Status'] = merged['Duration'].apply(
                 lambda x: "✅ Present" if pd.notna(x) and str(x).strip() not in ["", "-", "None"] else "❌ Absent"
             )
@@ -162,7 +163,7 @@ elif menu == "📊 Admin: Attendance Report":
             m1.metric("Present", pres_count)
             m2.metric("Absent", len(merged) - pres_count)
 
-            # Display Table
-            # Show original name, Status, and Duration
-            output_cols = [std_col, 'Status', 'Duration']
-            st.dataframe(merged[output_cols].astype(str), use_container_layout=True)
+            # Display with absolute column references
+            # We show the original 1st column from the roster, then Status, then Duration
+            display_df = merged[[std_col, 'Status', 'Duration']].rename(columns={std_col: "Student Name"})
+            st.dataframe(display_df.astype(str), use_container_layout=True)
