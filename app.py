@@ -109,7 +109,9 @@ elif menu == "📊 Attendance Dashboard":
         chart_data = filtered.groupby('Student Name').size().reset_index(name='Sessions')
         st.bar_chart(chart_data, x="Student Name", y="Sessions")
 
-        st.subheader("Data Overview")
-        st.dataframe(filtered, use_container_layout=True)
+    st.subheader("Data Overview")
+        # Fix: Convert all data to strings to prevent the TypeError in the table display
+        clean_df = filtered.astype(str)
+        st.dataframe(clean_df, use_container_layout=True)
     else:
         st.info("No data found. Upload a PDF to get started!")
