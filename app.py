@@ -90,7 +90,22 @@ if menu == "📤 Teacher: Upload PDF":
 # --- 4. DASHBOARD LOGIC (For Admin) ---
 elif menu == "📊 Admin: Attendance Report":
     st.title("Holistic Attendance View")
-    st.write("This view compares the **Student Roster** against the **Uploaded Data**.")
+    
+    # DEBUG: Show actual column names if there's an issue
+    if not roster_df.empty:
+        # This hidden check ensures we are looking for the right column name
+        actual_columns = [str(c).strip() for c in roster_df.columns]
+        target_col = "Student Name"
+        
+        if target_col not in actual_columns:
+            st.error(f"❌ Column Header Mismatch!")
+            st.write(f"The app is looking for: **'{target_col}'**")
+            st.write(f"But your 'Student Roster' tab actually has: {list(roster_df.columns)}")
+            st.info("Please rename your first column in the 'Student Roster' tab to match exactly.")
+            st.stop()
+    else:
+        st.warning("The 'Student Roster' tab appears to be empty.")
+        st.stop()
 
     with st.expander("Filter Report", expanded=True):
         f1, f2, f3 = st.columns(3)
@@ -104,39 +119,41 @@ elif menu == "📊 Admin: Attendance Report":
             sel_type = st.selectbox("Session Type", ["Webinar", "Tutorial", "Workshop", "Viva"])
 
     if st.button("Generate Holistic Report"):
-        if 'Student Name' not in roster_df.columns:
-            st.error("Error: Could not find 'Student Name' column in the 'Student Roster' tab. Please check your Google Sheet headers.")
+        # 1. Get Expected Students
+        # We use the cleaned column names found by our 'Detective' logic
+        expected = roster_df[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
+        
+        if expected.empty:
+            st.warning(f"No students found in roster for {sel_prog} - {sel_unit}.")
         else:
-            # 1. Get Expected Students from 'Student Roster'
-            expected = roster_df[(roster_df['Program Name'] == sel_prog) & (roster_df['Unit Name'] == sel_unit)].copy()
-            
-            if expected.empty:
-                st.warning(f"No students found in roster for {sel_prog} - {sel_unit}.")
-            else:
-                expected['Student Name'] = expected['Student Name'].astype(str).str.strip().upper()
+            # Using the exact string 'Student Name'
+            expected['Student Name'] = expected['Student Name'].astype(str).str.strip().upper()
 
-                # 2. Get Actual Attendance from 'Raw Dump'
-                if not dump_df.empty:
-                    # Ensure column names match and types are consistent for filtering
-                    actual = dump_df[
-                        (dump_df['Study Period'] == sel_sp) & 
-                        (dump_df['Unit Name'] == sel_unit) & 
-                        (dump_df['Week Number'].astype(str) == str(sel_week)) &
-                        (dump_df['Session Type'] == sel_type)
-                    ].copy()
+            # 2. Get Actual Attendance
+            if not dump_df.empty:
+                actual = dump_df[
+                    (dump_df['Study Period'] == sel_sp) & 
+                    (dump_df['Unit Name'] == sel_unit) & 
+                    (dump_df['Week Number'].astype(str) == str(sel_week)) &
+                    (dump_df['Session Type'] == sel_type)
+                ].copy()
+                
+                if not actual.empty and 'Student Name' in actual.columns:
                     actual['Student Name'] = actual['Student Name'].astype(str).str.strip().upper()
                 else:
                     actual = pd.DataFrame(columns=['Student Name', 'Duration'])
+            else:
+                actual = pd.DataFrame(columns=['Student Name', 'Duration'])
 
-                # 3. Merge to find Absentees
-                merged = pd.merge(expected[['Student Name']], actual[['Student Name', 'Duration']], on='Student Name', how='left')
-                merged['Status'] = merged['Duration'].apply(lambda x: "✅ Present" if pd.notna(x) and str(x).strip() != "" and str(x) != "-" else "❌ Absent")
-                
-                # Display Metrics
-                st.divider()
-                m1, m2 = st.columns(2)
-                pres = (merged['Status'] == "✅ Present").sum()
-                m1.metric("Present", pres)
-                m2.metric("Absent", len(merged) - pres)
+            # 3. Merge
+            merged = pd.merge(expected[['Student Name']], actual[['Student Name', 'Duration']], on='Student Name', how='left')
+            merged['Status'] = merged['Duration'].apply(lambda x: "✅ Present" if pd.notna(x) and str(x).strip() != "" and str(x) != "-" else "❌ Absent")
+            
+            # Display
+            st.divider()
+            m1, m2 = st.columns(2)
+            pres = (merged['Status'] == "✅ Present").sum()
+            m1.metric("Present", pres)
+            m2.metric("Absent", len(merged) - pres)
 
-                st.dataframe(merged[['Student Name', 'Status', 'Duration']].astype(str), use_container_layout=True)
+            st.dataframe(merged[['Student Name', 'Status', 'Duration']].astype(str), use_container_layout=True)
